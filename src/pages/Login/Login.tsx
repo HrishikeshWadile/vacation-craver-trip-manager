@@ -84,12 +84,12 @@ export default function Login() {
           {submitting ? "Signing in…" : "Sign in"}
         </button>
 
-        <p className="text-center text-xs text-slate-400">
+        {/* <p className="text-center text-xs text-slate-400">
           Are you an organizer?{" "}
           <Link to="/admin/login" className="text-slate-500 underline hover:text-slate-700">
             Go to admin login
           </Link>
-        </p>
+        </p> */}
       </form>
     </AuthCard>
   );

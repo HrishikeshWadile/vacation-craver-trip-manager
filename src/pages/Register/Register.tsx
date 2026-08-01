@@ -2,71 +2,161 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { AuthCard } from "../../components/ui/AuthCard";
 import { FormField, SelectField } from "../../components/ui/FormField";
-import { registerStudent } from "../../services/authService";
+// NOTE: backend not wired up yet — see onSubmit below. Once schema.sql
+// and authService.registerStudent() are updated to match these fields,
+// swap the stub back to the real call.
+// import { registerStudent } from "../../services/authService";
 
-const fileSchema =
+const ALLOWED_AADHAR_TYPES = ["image/jpeg", "image/png", "application/pdf"];
+
+const aadharPhotoSchema =
   typeof window === "undefined"
     ? z.any()
     : z
-        .instanceof(FileList)
-        .refine((f) => f.length === 1, "This file is required")
-        .refine((f) => f[0]?.size <= 5 * 1024 * 1024, "Max file size is 5MB");
+      .instanceof(FileList)
+      .refine((f) => f.length === 1, "Aadhar card file is required")
+      .refine(
+        (f) => ALLOWED_AADHAR_TYPES.includes(f[0]?.type),
+        "Only PDF, JPG, or PNG files are allowed"
+      )
+      .refine((f) => f[0]?.size <= 10 * 1024 * 1024, "Max file size is 10MB");
+
+// Plain-JS predicates used for the live "can I continue" check — kept
+// separate from the zod schema so button state never depends on RHF's
+// async validation cycle (that lag is what caused the stale
+// password-mismatch you saw after copy/pasting and clicking Continue
+// before validation caught up).
+const isValidEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+const isTenDigits = (v: string) => /^\d{10}$/.test(v);
+const isTwelveDigits = (v: string) => /^\d{12}$/.test(v);
 
 const schema = z
   .object({
-    email: z.string().email("Enter a valid email"),
+    email: z.string().refine(isValidEmail, "Enter a valid email"),
     password: z.string().min(8, "At least 8 characters"),
     confirmPassword: z.string(),
 
     full_name: z.string().min(2, "Enter your full name"),
-    phone: z.string().min(10, "Enter a valid phone number"),
-    gender: z.string().min(1, "Select an option"),
-    date_of_birth: z.string().min(1, "Required"),
+    age: z
+      .string()
+      .min(1, "Required")
+      .refine((v) => {
+        const n = Number(v);
+        return Number.isInteger(n) && n >= 16 && n <= 100;
+      }, "Enter an age between 16 and 100"),
+    phone_calling: z.string().refine(isTenDigits, "Enter a 10-digit phone number"),
+    phone_whatsapp: z.string().refine(isTenDigits, "Enter a 10-digit phone number"),
+    gender: z.enum(["male", "female", "other"], {
+      error: "Select an option",
+    }),
+    gender_other: z.string().optional(),
+
+    guardian_name: z.string().min(2, "Required"),
+    guardian_contact: z.string().refine(isTenDigits, "Enter a 10-digit phone number"),
+    guardian_relation: z.string().min(2, "e.g. Father, Mother, Sibling"),
 
     college_name: z.string().min(2, "Required"),
-    college_roll_no: z.string().min(1, "Required"),
-    department: z.string().min(1, "Required"),
+    department: z.string().min(2, "Required"),
     year_of_study: z.string().min(1, "Select an option"),
 
-    profile_photo: fileSchema,
-    id_proof: fileSchema,
+    aadhar_number: z.string().refine(isTwelveDigits, "Must be exactly 12 digits"),
+    aadhar_photo: aadharPhotoSchema,
   })
   .refine((data) => data.password === data.confirmPassword, {
     message: "Passwords don't match",
     path: ["confirmPassword"],
-  });
+  })
+  .refine(
+    (data) => data.gender !== "other" || (data.gender_other?.trim().length ?? 0) > 0,
+    { message: "Please specify", path: ["gender_other"] }
+  );
 
 type FormValues = z.infer<typeof schema>;
 
-const STEPS = ["Account", "Personal", "College", "Documents"] as const;
+const STEPS = ["Account", "Personal & Contact", "Guardian & College", "Identity"] as const;
+
+/** Strips a raw input event's value down to digits only, capped at
+ * maxLen, then hands the cleaned value to RHF's own onChange so
+ * validation state still updates normally. */
+function digitsOnlyHandler(
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void,
+  maxLen: number
+) {
+  return (e: React.ChangeEvent<HTMLInputElement>) => {
+    e.target.value = e.target.value.replace(/\D/g, "").slice(0, maxLen);
+    onChange(e);
+  };
+}
 
 export default function Register() {
   const [step, setStep] = useState(0);
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState<{ needsEmailConfirmation: boolean } | null>(null);
-  const navigate = useNavigate();
+  const [showPassword, setShowPassword] = useState(false);
 
   const {
     register,
     handleSubmit,
     trigger,
+    watch,
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    mode: "onBlur",
+    mode: "onChange",
   });
 
-  // Fields validated before letting the user move to the next step.
+  // Subscribing to the whole form means this component re-renders on
+  // every keystroke — that's exactly what we want so "can continue"
+  // reflects the current values immediately, not after a validation
+  // round-trip.
+  const values = watch();
+  const gender = values.gender;
+
+  const phoneCallingReg = register("phone_calling");
+  const phoneWhatsappReg = register("phone_whatsapp");
+  const guardianContactReg = register("guardian_contact");
+  const aadharNumberReg = register("aadhar_number");
+
   const stepFields: (keyof FormValues)[][] = [
     ["email", "password", "confirmPassword"],
-    ["full_name", "phone", "gender", "date_of_birth"],
-    ["college_name", "college_roll_no", "department", "year_of_study"],
-    ["profile_photo", "id_proof"],
+    ["full_name", "age", "phone_calling", "phone_whatsapp", "gender", "gender_other"],
+    ["guardian_name", "guardian_contact", "guardian_relation", "college_name", "department", "year_of_study"],
+    ["aadhar_number", "aadhar_photo"],
   ];
+
+  const stepValid = [
+    Boolean(values.email) &&
+    isValidEmail(values.email) &&
+    Boolean(values.password) &&
+    values.password.length >= 8 &&
+    Boolean(values.confirmPassword) &&
+    values.password === values.confirmPassword,
+
+    Boolean(values.full_name?.trim()) &&
+    Boolean(values.age) &&
+    Number.isInteger(Number(values.age)) &&
+    Number(values.age) >= 16 &&
+    Number(values.age) <= 100 &&
+    isTenDigits(values.phone_calling ?? "") &&
+    isTenDigits(values.phone_whatsapp ?? "") &&
+    Boolean(values.gender) &&
+    (values.gender !== "other" || Boolean(values.gender_other?.trim())),
+
+    Boolean(values.guardian_name?.trim()) &&
+    isTenDigits(values.guardian_contact ?? "") &&
+    Boolean(values.guardian_relation?.trim()) &&
+    Boolean(values.college_name?.trim()) &&
+    Boolean(values.department?.trim()) &&
+    Boolean(values.year_of_study),
+
+    isTwelveDigits(values.aadhar_number ?? "") &&
+    values.aadhar_photo?.length === 1 &&
+    ALLOWED_AADHAR_TYPES.includes(values.aadhar_photo?.[0]?.type ?? "") &&
+    (values.aadhar_photo?.[0]?.size ?? Infinity) <= 10 * 1024 * 1024,
+  ][step];
 
   async function goNext() {
     const valid = await trigger(stepFields[step]);
@@ -77,16 +167,17 @@ export default function Register() {
     setStep((s) => Math.max(s - 1, 0));
   }
 
-  async function onSubmit(values: FormValues) {
+  async function onSubmit(formValues: FormValues) {
     setServerError(null);
     setSubmitting(true);
     try {
-      const result = await registerStudent(values);
-      if (result.needsEmailConfirmation) {
-        setDone({ needsEmailConfirmation: true });
-      } else {
-        navigate("/dashboard", { replace: true });
-      }
+      // --- TEMPORARY STUB: backend not attached yet ---
+      console.log("Form values:", formValues);
+      alert("Check the browser console for the submitted form values.");
+      // --- once schema.sql + authService are updated, replace the
+      // block above with:
+      // const result = await registerStudent(formValues);
+      // ...
     } catch (err) {
       setServerError(err instanceof Error ? err.message : "Registration failed.");
     } finally {
@@ -94,22 +185,10 @@ export default function Register() {
     }
   }
 
-  if (done) {
-    return (
-      <AuthCard eyebrow="Trip Pass · Student" title="Check your email">
-        <p className="text-sm text-slate-600">
-          We've sent a confirmation link to your email. Once confirmed, log in to
-          finish uploading your documents if they didn't save automatically.
-        </p>
-        <Link
-          to="/login"
-          className="mt-6 inline-block rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
-        >
-          Go to login
-        </Link>
-      </AuthCard>
-    );
-  }
+  const continueBtnClass = `flex-1 rounded-xl py-2.5 text-sm font-semibold transition-colors ${stepValid
+    ? "bg-indigo-600 text-white hover:bg-indigo-700"
+    : "bg-slate-200 text-slate-400 cursor-not-allowed"
+    }`;
 
   return (
     <AuthCard
@@ -125,14 +204,12 @@ export default function Register() {
         </p>
       }
     >
-      {/* progress */}
       <div className="mb-6 flex gap-1.5">
         {STEPS.map((label, i) => (
           <div
             key={label}
-            className={`h-1.5 flex-1 rounded-full ${
-              i <= step ? "bg-indigo-600" : "bg-slate-200"
-            }`}
+            className={`h-1.5 flex-1 rounded-full ${i <= step ? "bg-indigo-600" : "bg-slate-200"
+              }`}
           />
         ))}
       </div>
@@ -147,13 +224,34 @@ export default function Register() {
               error={errors.email?.message}
               {...register("email")}
             />
-            <FormField
-              label="Password"
-              type="password"
-              autoComplete="new-password"
-              error={errors.password?.message}
-              {...register("password")}
-            />
+
+            <div className="space-y-1.5">
+              <label htmlFor="password" className="block text-sm font-medium text-slate-700">
+                Password
+              </label>
+              <div className="relative">
+                <input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="new-password"
+                  className={`w-full rounded-xl border px-3.5 py-2.5 pr-16 text-sm text-slate-900
+                    focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500
+                    ${errors.password ? "border-rose-400" : "border-slate-300"}`}
+                  {...register("password")}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((s) => !s)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-indigo-600 hover:text-indigo-700"
+                >
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+              {errors.password && (
+                <p className="text-xs text-rose-600">{errors.password.message}</p>
+              )}
+            </div>
+
             <FormField
               label="Confirm password"
               type="password"
@@ -167,106 +265,134 @@ export default function Register() {
         {step === 1 && (
           <>
             <FormField
-              label="Full name"
+              label="Full Name"
               error={errors.full_name?.message}
               {...register("full_name")}
             />
             <FormField
-              label="Phone number"
+              label="Age"
+              type="number"
+              inputMode="numeric"
+              error={errors.age?.message}
+              {...register("age")}
+            />
+            <FormField
+              label="Contact (calling)"
               type="tel"
-              error={errors.phone?.message}
-              {...register("phone")}
+              inputMode="numeric"
+              placeholder="10-digit number"
+              error={errors.phone_calling?.message}
+              {...phoneCallingReg}
+              onChange={digitsOnlyHandler(phoneCallingReg.onChange, 10)}
+            />
+            <FormField
+              label="Contact (WhatsApp)"
+              type="tel"
+              inputMode="numeric"
+              placeholder="10-digit number"
+              error={errors.phone_whatsapp?.message}
+              {...phoneWhatsappReg}
+              onChange={digitsOnlyHandler(phoneWhatsappReg.onChange, 10)}
             />
             <SelectField label="Gender" error={errors.gender?.message} {...register("gender")}>
               <option value="">Select</option>
-              <option value="female">Female</option>
               <option value="male">Male</option>
+              <option value="female">Female</option>
               <option value="other">Other</option>
-              <option value="prefer_not_to_say">Prefer not to say</option>
             </SelectField>
-            <FormField
-              label="Date of birth"
-              type="date"
-              error={errors.date_of_birth?.message}
-              {...register("date_of_birth")}
-            />
+            {gender === "other" && (
+              <FormField
+                label="Please specify"
+                error={errors.gender_other?.message}
+                {...register("gender_other")}
+              />
+            )}
           </>
         )}
 
         {step === 2 && (
           <>
             <FormField
-              label="College name"
+              label="Guardian / Emergency Name"
+              error={errors.guardian_name?.message}
+              {...register("guardian_name")}
+            />
+            <FormField
+              label="Guardian / Emergency Contact"
+              type="tel"
+              inputMode="numeric"
+              placeholder="10-digit number"
+              error={errors.guardian_contact?.message}
+              {...guardianContactReg}
+              onChange={digitsOnlyHandler(guardianContactReg.onChange, 10)}
+            />
+            <FormField
+              label="Relation to Guardian / Emergency contact"
+              placeholder="e.g. Father"
+              error={errors.guardian_relation?.message}
+              {...register("guardian_relation")}
+            />
+            <FormField
+              label="College Name"
+              placeholder="e.g. AISSMS IOIT (or the authority you work under, if not a student)"
               error={errors.college_name?.message}
               {...register("college_name")}
             />
             <FormField
-              label="Roll number"
-              error={errors.college_roll_no?.message}
-              {...register("college_roll_no")}
-            />
-            <FormField
               label="Department"
-              placeholder="e.g. Computer Engineering"
+              placeholder="e.g. Computer Science"
               error={errors.department?.message}
               {...register("department")}
             />
             <SelectField
-              label="Year of study"
+              label="Year of Study"
               error={errors.year_of_study?.message}
               {...register("year_of_study")}
             >
               <option value="">Select</option>
-              <option value="1">1st year</option>
-              <option value="2">2nd year</option>
-              <option value="3">3rd year</option>
-              <option value="4">4th year</option>
+              <option value="FY">1st year (FY)</option>
+              <option value="SY">2nd year (SY)</option>
+              <option value="TY">3rd year (TY)</option>
+              <option value="B.Tech">Final year (B.Tech)</option>
               <option value="pg">Postgraduate</option>
+              <option value="na">Not applicable</option>
             </SelectField>
           </>
         )}
 
         {step === 3 && (
           <>
-            <div className="space-y-1.5">
-              <label className="block text-sm font-medium text-slate-700">
-                Profile photo
-              </label>
-              <input
-                type="file"
-                accept="image/*"
-                className="block w-full text-sm text-slate-600
-                  file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50
-                  file:px-3.5 file:py-2 file:text-sm file:font-medium file:text-indigo-700
-                  hover:file:bg-indigo-100"
-                {...register("profile_photo")}
-              />
-              {errors.profile_photo && (
-                <p className="text-xs text-rose-600">
-                  {String(errors.profile_photo.message)}
-                </p>
-              )}
-            </div>
+            <FormField
+              label="Aadhar Card Number"
+              placeholder="12-digit number"
+              inputMode="numeric"
+              error={errors.aadhar_number?.message}
+              {...aadharNumberReg}
+              onChange={digitsOnlyHandler(aadharNumberReg.onChange, 12)}
+            />
 
             <div className="space-y-1.5">
               <label className="block text-sm font-medium text-slate-700">
-                College ID / government ID (photo or scan)
+                Aadhar Card Photo
               </label>
+              <p className="text-xs text-slate-500">
+                Rename the file with your name before uploading (e.g. "Abhi Desai"). PDF,
+                JPG, or PNG only, max 10MB.
+              </p>
               <input
                 type="file"
-                accept="image/*,application/pdf"
+                accept="image/jpeg,image/png,application/pdf"
                 className="block w-full text-sm text-slate-600
                   file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50
                   file:px-3.5 file:py-2 file:text-sm file:font-medium file:text-indigo-700
                   hover:file:bg-indigo-100"
-                {...register("id_proof")}
+                {...register("aadhar_photo")}
               />
-              {errors.id_proof && (
-                <p className="text-xs text-rose-600">{String(errors.id_proof.message)}</p>
+              {errors.aadhar_photo && (
+                <p className="text-xs text-rose-600">
+                  {String(errors.aadhar_photo.message)}
+                </p>
               )}
-              <p className="text-xs text-slate-400">
-                An admin will verify this before your registration is confirmed.
-              </p>
             </div>
           </>
         )}
@@ -291,17 +417,18 @@ export default function Register() {
             <button
               type="button"
               onClick={goNext}
-              className="flex-1 rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"
+              disabled={!stepValid}
+              className={continueBtnClass}
             >
               Continue
             </button>
           ) : (
             <button
               type="submit"
-              disabled={submitting}
-              className="flex-1 rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+              disabled={submitting || !stepValid}
+              className={continueBtnClass}
             >
-              {submitting ? "Creating profile…" : "Create profile"}
+              {submitting ? "Submitting…" : "Create profile"}
             </button>
           )}
         </div>
