@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
-import { getMyTripById, getActiveParticipantCount } from "../../services/tripService";
+import { getMyTripById, getActiveParticipantCount, acceptTripDeclaration } from "../../services/tripService";
 import {
   getVisiblePaymentsForTrip,
   submitPayment,
@@ -13,6 +13,7 @@ import { getItineraries, getItineraryDownloadUrl, type Itinerary } from "../../s
 import { ItineraryRow } from "../../components/ui/ItineraryRow";
 import { AdsFooter } from "../../components/ads/AdsFooter";
 
+
 type Trip = {
   id: string;
   trip_code: string;
@@ -20,6 +21,8 @@ type Trip = {
   description: string | null;
   is_active: boolean;
   whatsapp_link: string | null;
+  declaration_text: string | null;
+  declaration_accepted_at: string | null;
   joined_at: string;
 };
 
@@ -31,10 +34,13 @@ export default function TripDetail() {
   const [trip, setTrip] = useState<Trip | null | undefined>(undefined);
   const [tab, setTab] = useState<Tab>("info");
   const [itineraries, setItineraries] = useState<Itinerary[]>([]);
-
+  const [declarationAccepted, setDeclarationAccepted] = useState(false);
   useEffect(() => {
     if (!tripId) return;
-    getMyTripById(tripId).then(setTrip);
+    getMyTripById(tripId).then((t) => {
+      setTrip(t);
+      setDeclarationAccepted(!!t?.declaration_accepted_at);
+    });
     getItineraries(tripId).then(setItineraries);
   }, [tripId]);
 
@@ -45,6 +51,12 @@ export default function TripDetail() {
     } catch {
       alert("Could not open this file. Try again.");
     }
+  }
+
+  async function handleAcceptDeclaration() {
+    if (!trip) return;
+    await acceptTripDeclaration(trip.id);
+    setDeclarationAccepted(true);
   }
 
   if (trip === undefined) {
@@ -68,6 +80,11 @@ export default function TripDetail() {
 
   return (
     <div className="h-screen flex flex-col bg-slate-950 text-white overflow-hidden">
+      <div className="shrink-0 bg-amber-950/40 border-b border-amber-900 px-6 py-2 text-center">
+        <p className="text-xs text-amber-300">
+          This trip is organized solely by Vacation Craver — not by any college or institute.
+        </p>
+      </div>
       {/* Fixed header — trip title never scrolls away */}
       <header className="shrink-0 border-b border-slate-800 px-6 py-4">
         <div className="flex items-center justify-between gap-4">
@@ -88,6 +105,9 @@ export default function TripDetail() {
           <TabButton active={tab === "payments"} onClick={() => setTab("payments")}>
             Payments
           </TabButton>
+          {trip.declaration_text && !declarationAccepted && (
+            <DeclarationModal text={trip.declaration_text} onAccept={handleAcceptDeclaration} />
+          )}
         </div>
       </header>
 
@@ -154,9 +174,8 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
   return (
     <button
       onClick={onClick}
-      className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
-        active ? "border-indigo-400 text-white" : "border-transparent text-slate-500 hover:text-slate-300"
-      }`}
+      className={`pb-2 text-sm font-medium border-b-2 transition-colors ${active ? "border-indigo-400 text-white" : "border-transparent text-slate-500 hover:text-slate-300"
+        }`}
     >
       {children}
     </button>
@@ -386,4 +405,50 @@ function StatusPill({ status }: { status: string }) {
         ? "bg-rose-900 text-rose-300"
         : "bg-amber-900 text-amber-300";
   return <span className={`text-xs px-2 py-0.5 rounded-lg ${styles}`}>{status}</span>;
+}
+
+function DeclarationModal({ text, onAccept }: { text: string; onAccept: () => void }) {
+  const [checked, setChecked] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleAccept() {
+    setSubmitting(true);
+    try {
+      await onAccept();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+      <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-slate-700 flex flex-col max-h-[85vh]">
+        <div className="shrink-0 border-b border-slate-800 px-6 py-4">
+          <p className="text-xs text-amber-400 font-semibold uppercase tracking-wider">Before you continue</p>
+          <h2 className="text-lg font-bold mt-1">Trip Declaration</h2>
+        </div>
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{text}</p>
+        </div>
+        <div className="shrink-0 border-t border-slate-800 px-6 py-4 space-y-3">
+          <label className="flex items-start gap-2.5 text-sm text-slate-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(e) => setChecked(e.target.checked)}
+              className="mt-0.5 accent-amber-500"
+            />
+            I have read and understood the above, and I accept these terms.
+          </label>
+          <button
+            onClick={handleAccept}
+            disabled={!checked || submitting}
+            className="w-full rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 px-4 py-2.5 text-sm font-semibold transition-colors"
+          >
+            {submitting ? "Saving…" : "Accept & Continue"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

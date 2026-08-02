@@ -4,6 +4,7 @@ import { cache } from "./cache";
 export type Participant = {
     status: string;
     joined_at: string;
+    declaration_accepted_at?: string | null;
     profiles: {
         id: string;
         full_name: string;
@@ -29,12 +30,17 @@ function generateTripCode(): string {
     return Array.from({ length: 7 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
 }
 
-export async function createTrip(name: string, description: string) {
+export async function createTrip(name: string, description: string, declarationText: string) {
     for (let attempt = 0; attempt < 5; attempt++) {
         const trip_code = generateTripCode();
         const { data, error } = await supabase
             .from("trips")
-            .insert({ trip_name: name, description, trip_code })
+            .insert({
+                trip_name: name,
+                description,
+                trip_code,
+                declaration_text: declarationText.trim() || null,
+            })
             .select()
             .single();
 
@@ -54,7 +60,6 @@ export async function joinTrip(tripCode: string) {
     if (error) throw new Error(error.message);
     const trip = Array.isArray(data) ? data[0] : data;
     if (!trip) throw new Error("Trip not found. Check the code and try again.");
-    // invalidate student trips so the new one shows immediately
     cache.invalidate("student:trips");
     return trip as { id: string; trip_name: string };
 }
@@ -98,8 +103,21 @@ export async function setTripWhatsappLink(tripId: string, link: string) {
         .update({ whatsapp_link: link.trim() || null })
         .eq("id", tripId);
     if (error) throw error;
-    // invalidate both — admin sees it in trip list, student sees it in their card
     cache.invalidate("admin:trips", "student:trips");
+}
+
+export async function setTripDeclaration(tripId: string, text: string) {
+    const { error } = await supabase
+        .from("trips")
+        .update({ declaration_text: text.trim() || null })
+        .eq("id", tripId);
+    if (error) throw error;
+    cache.invalidate("admin:trips", "student:trips");
+}
+
+export async function acceptTripDeclaration(tripId: string) {
+    const { error } = await supabase.rpc("accept_trip_declaration", { p_trip_id: tripId });
+    if (error) throw error;
 }
 
 export async function getActiveParticipantCount(tripId: string) {
@@ -126,8 +144,8 @@ export async function getMyTripById(tripId: string) {
     const { data, error } = await supabase
         .from("trip_participants")
         .select(
-            `status, joined_at,
-       trips (id, trip_code, trip_name, description, is_active, whatsapp_link, created_at)`
+            `status, joined_at, declaration_accepted_at,
+       trips (id, trip_code, trip_name, description, is_active, whatsapp_link, declaration_text, created_at)`
         )
         .eq("user_id", user.id)
         .eq("trip_id", tripId)
@@ -135,7 +153,11 @@ export async function getMyTripById(tripId: string) {
 
     if (error) throw error;
     if (!data) return null;
-    return { ...(data as any).trips, joined_at: (data as any).joined_at };
+    return {
+        ...(data as any).trips,
+        joined_at: (data as any).joined_at,
+        declaration_accepted_at: (data as any).declaration_accepted_at,
+    };
 }
 
 export async function getTripParticipants(tripId: string) {
@@ -143,7 +165,7 @@ export async function getTripParticipants(tripId: string) {
         const { data, error } = await supabase
             .from("trip_participants")
             .select(
-                `status, joined_at,
+                `status, joined_at, declaration_accepted_at,
          profiles (
            id, full_name, age, phone_calling, phone_whatsapp, gender, gender_other,
            guardian_name, guardian_contact, guardian_relation,
@@ -157,6 +179,14 @@ export async function getTripParticipants(tripId: string) {
         if (error) throw error;
         return (data ?? []) as unknown as Participant[];
     });
+}
+
+export async function getAadharDownloadUrl(path: string): Promise<string> {
+    const { data, error } = await supabase.storage
+        .from("aadhar-photos")
+        .createSignedUrl(path, 60 * 5);
+    if (error || !data) throw error ?? new Error("Could not generate download link.");
+    return data.signedUrl;
 }
 
 export async function setParticipantStatus(
@@ -183,12 +213,4 @@ export async function removeParticipant(tripId: string, userId: string) {
 
     if (error) throw error;
     cache.invalidate(`participants:${tripId}`);
-}
-
-export async function getAadharDownloadUrl(path: string): Promise<string> {
-    const { data, error } = await supabase.storage
-        .from("aadhar-photos")
-        .createSignedUrl(path, 60 * 5); // 5 min
-    if (error || !data) throw error ?? new Error("Could not generate download link.");
-    return data.signedUrl;
 }

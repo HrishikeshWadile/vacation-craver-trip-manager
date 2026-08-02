@@ -9,6 +9,7 @@ import {
   setParticipantStatus,
   removeParticipant,
   setTripWhatsappLink,
+  setTripDeclaration,
   getActiveParticipantCount,
   type Participant,
 } from "../../services/tripService";
@@ -92,6 +93,7 @@ export default function AdminDashboard() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [loadingParticipants, setLoadingParticipants] = useState(false);
   const [detailParticipant, setDetailParticipant] = useState<Participant | null>(null);
+  const [newDeclaration, setNewDeclaration] = useState("");
 
   // Create trip form
   const [showCreate, setShowCreate] = useState(false);
@@ -104,6 +106,11 @@ export default function AdminDashboard() {
   const [waLink, setWaLink] = useState("");
   const [savingWaLink, setSavingWaLink] = useState(false);
   const [waSaved, setWaSaved] = useState(false);
+
+  const [declarationText, setDeclarationText] = useState("");
+  const [savingDeclaration, setSavingDeclaration] = useState(false);
+  const [declarationSaved, setDeclarationSaved] = useState(false);
+  const [participantSearch, setParticipantSearch] = useState("");
 
   // Payments (payment items, formerly "installments")
   const [installments, setInstallments] = useState<Installment[]>([]);
@@ -263,9 +270,10 @@ export default function AdminDashboard() {
     setCreating(true);
     setCreateError(null);
     try {
-      await createTrip(newName.trim(), newDesc.trim());
+      await createTrip(newName.trim(), newDesc.trim(), newDeclaration.trim());
       setNewName("");
       setNewDesc("");
+      setNewDeclaration("");
       setShowCreate(false);
       loadTrips();
     } catch (err) {
@@ -279,6 +287,9 @@ export default function AdminDashboard() {
     setSelectedTrip(trip);
     setWaLink(trip.whatsapp_link ?? "");
     setWaSaved(false);
+    setDeclarationText((trip as any).declaration_text ?? "");
+    setDeclarationSaved(false);
+    setParticipantSearch("");
     setTab("participants");
     loadParticipants(trip.id);
     loadInstallments(trip.id);
@@ -302,6 +313,18 @@ export default function AdminDashboard() {
       setWaSaved(true);
     } finally {
       setSavingWaLink(false);
+    }
+  }
+
+  async function handleSaveDeclaration() {
+    if (!selectedTrip) return;
+    setSavingDeclaration(true);
+    setDeclarationSaved(false);
+    try {
+      await setTripDeclaration(selectedTrip.id, declarationText);
+      setDeclarationSaved(true);
+    } finally {
+      setSavingDeclaration(false);
     }
   }
 
@@ -563,6 +586,18 @@ export default function AdminDashboard() {
                     className="w-full rounded-xl bg-slate-800 border border-slate-700 px-4 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none"
                   />
                 </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs text-slate-400 uppercase tracking-wider">
+                    Declaration / Terms (shown to students on first open)
+                  </label>
+                  <textarea
+                    value={newDeclaration}
+                    onChange={(e) => setNewDeclaration(e.target.value)}
+                    rows={6}
+                    placeholder="Liability waiver, code of conduct, etc. Leave blank to skip."
+                    className="w-full rounded-xl bg-slate-800 border border-slate-700 px-4 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none"
+                  />
+                </div>
                 {createError && <p className="text-sm text-rose-400">{createError}</p>}
                 <button
                   type="submit"
@@ -630,17 +665,61 @@ export default function AdminDashboard() {
               {waSaved && <p className="text-xs text-emerald-400">Saved.</p>}
             </div>
 
+            <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5 space-y-2">
+              <label className="text-xs text-slate-400 uppercase tracking-wider">
+                Declaration / Terms (shown once, on first open)
+              </label>
+              <textarea
+                value={declarationText}
+                onChange={(e) => setDeclarationText(e.target.value)}
+                rows={6}
+                placeholder="Liability waiver, code of conduct, etc."
+                className="w-full rounded-xl bg-slate-800 border border-slate-700 px-4 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none"
+              />
+              <button
+                onClick={handleSaveDeclaration}
+                disabled={savingDeclaration}
+                className="rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 px-4 py-2 text-sm font-semibold transition-colors"
+              >
+                {savingDeclaration ? "Saving…" : "Save"}
+              </button>
+              {declarationSaved && <p className="text-xs text-emerald-400">Saved.</p>}
+            </div>
+
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-sm text-slate-400">
+                {participants.filter((p) =>
+                  p.profiles &&
+                  (p.profiles.full_name.toLowerCase().includes(participantSearch.toLowerCase()) ||
+                    (p.profiles.college_name ?? "").toLowerCase().includes(participantSearch.toLowerCase()))
+                ).length}{" "}
+                of {participants.length} participants
+              </p>
+              <input
+                value={participantSearch}
+                onChange={(e) => setParticipantSearch(e.target.value)}
+                placeholder="Search by name or college…"
+                className="w-64 rounded-xl bg-slate-800 border border-slate-700 px-4 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+
             {loadingParticipants ? (
               <Spinner />
             ) : participants.length === 0 ? (
               <Empty>No participants yet.</Empty>
             ) : (
               <div className="space-y-2">
-                {participants.map((p) =>
-                  p.profiles ? (
-                    <ParticipantListTile key={p.profiles.id} participant={p} onClick={() => setDetailParticipant(p)} />
-                  ) : null
-                )}
+                {participants
+                  .filter((p) =>
+                    p.profiles &&
+                    (p.profiles.full_name.toLowerCase().includes(participantSearch.toLowerCase()) ||
+                      (p.profiles.college_name ?? "").toLowerCase().includes(participantSearch.toLowerCase()))
+                  )
+                  .map((p) =>
+                    p.profiles ? (
+                      <ParticipantListTile key={p.profiles.id} participant={p} onClick={() => setDetailParticipant(p)} />
+                    ) : null
+                  )}
               </div>
             )}
           </div>
