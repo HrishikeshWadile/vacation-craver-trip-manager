@@ -1,19 +1,16 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
-import { ProtectedRoute } from "./routes/ProtectedRoute";
+import { ProtectedRoute, CompleteProfileRoute } from "./routes/ProtectedRoute";
 import { AdminRoute } from "./routes/AdminRoute";
 
 import Login from "./pages/Login/Login";
 import Register from "./pages/Register/Register";
 import AdminLogin from "./pages/Login/AdminLogin";
-
-// Placeholders — build these out next.
-function StudentDashboard() {
-  return <div className="p-8 text-white">Student dashboard (placeholder)</div>;
-}
-function AdminDashboard() {
-  return <div className="p-8 text-white">Admin dashboard (placeholder)</div>;
-}
+import CompleteProfile from "./pages/CompleteProfile/CompleteProfile";
+import StudentDashboard from "./pages/Dashboard/StudentDashboard";
+import TripDetail from "./pages/Dashboard/TripDetail";
+import Settings from "./pages/Settings/Settings";
+import AdminDashboard from "./pages/admin/AdminDashboard";
 
 export default function App() {
   return (
@@ -25,18 +22,24 @@ export default function App() {
           {/* Public */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/admin" element={<Navigate to="/admin/login" replace />} />
           <Route path="/admin/login" element={<AdminLogin />} />
 
-          {/* Student area — anything nested here requires a session */}
-          <Route element={<ProtectedRoute />}>
-            <Route path="/dashboard" element={<StudentDashboard />} />
-            {/* /trips, /payments, /rooms etc. go here later */}
+          {/* Session required, profile completion not required */}
+          <Route element={<CompleteProfileRoute />}>
+            <Route path="/complete-profile" element={<CompleteProfile />} />
           </Route>
 
-          {/* Admin area — requires session AND profile.role === 'admin' */}
+          {/* Session + completed profile required */}
+          <Route element={<ProtectedRoute />}>
+            <Route path="/dashboard" element={<StudentDashboard />} />
+            <Route path="/trip/:tripId" element={<TripDetail />} />
+            <Route path="/settings" element={<Settings />} />
+          </Route>
+
+          {/* Session + admin role required */}
           <Route element={<AdminRoute />}>
             <Route path="/admin/dashboard" element={<AdminDashboard />} />
-            {/* /admin/payments, /admin/rooms, /admin/students etc. go here later */}
           </Route>
 
           <Route path="*" element={<Navigate to="/login" replace />} />

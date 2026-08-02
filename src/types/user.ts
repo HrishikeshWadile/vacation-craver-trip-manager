@@ -1,29 +1,35 @@
-import type { ProfileRow, UserRole, VerificationStatus } from "./database";
+import type { Tables, Enums } from "./database";
 
-export type { UserRole, VerificationStatus };
+export type UserRole = Enums<"user_role">;
+export type VerificationStatus = Enums<"verification_status">;
 
-export type Profile = ProfileRow;
+export type Profile = Tables<"profiles">;
 
 export interface RegisterFormValues {
   email: string;
   password: string;
   confirmPassword: string;
-
-  // personal
   full_name: string;
-  phone: string;
-  gender: string;
-  date_of_birth: string;
+}
 
-  // college
+export interface ProfileFormValues {
+  full_name: string;
+  age: string;
+  phone_calling: string;
+  phone_whatsapp: string;
+  gender: string;
+  gender_other?: string;
+
+  guardian_name: string;
+  guardian_contact: string;
+  guardian_relation: string;
+
   college_name: string;
-  college_roll_no: string;
   department: string;
   year_of_study: string;
 
-  // files (handled outside the zod-validated text fields)
-  profile_photo: FileList;
-  id_proof: FileList;
+  aadhar_number: string;
+  aadhar_photo: FileList;
 }
 
 export interface LoginFormValues {
