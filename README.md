@@ -1,84 +1,168 @@
-# Trip Management — Auth slice
+# Vacation Craver Trip Manager
 
-This is the login/register/admin-gating layer, built against the
-folder structure and stack you already laid out (React + TS + Vite,
-Tailwind, Supabase, React Hook Form + Zod, react-router).
+A React + TypeScript trip-management application for students and administrators. The current implementation focuses on authentication, profile completion, role-based access control, and the foundation for trip management using Supabase.
 
-## What's here
+## Tech stack
 
+- **React 19** with TypeScript
+- **Vite** for development and production builds
+- **React Router** for client-side routing
+- **Supabase** for authentication, PostgreSQL, row-level security, and private storage
+- **React Hook Form** and **Zod** for form state and validation
+- **Tailwind CSS** for styling
+- **jsPDF** for PDF-related functionality
+- **Oxlint** for linting
+
+## Current features
+
+### Student experience
+
+- Student registration with a multi-step profile flow
+- Student login and session handling
+- Profile completion page for authenticated users
+- Student dashboard
+- Trip details route (`/trip/:tripId`)
+- Account settings
+- Protected routes that require authentication and a completed profile
+
+### Administrator experience
+
+- Separate administrator login screen
+- Role-based admin route protection
+- Admin dashboard
+- Admin access controlled by the `admin` role in the Supabase profile
+
+### Data and security foundation
+
+- Supabase Auth integration
+- `profiles` and `trips` database tables
+- Profile creation trigger for newly registered users
+- Row-level security policies for user-owned data
+- Private storage buckets for profile photos and ID proofs
+- File paths stored instead of public file URLs
+- Student/admin roles and ID-verification status support
+
+## Application routes
+
+| Route | Access | Purpose |
+| --- | --- | --- |
+| `/login` | Public | Student login |
+| `/register` | Public | Student registration |
+| `/admin/login` | Public | Administrator login |
+| `/complete-profile` | Authenticated | Complete the user profile |
+| `/dashboard` | Authenticated + completed profile | Student dashboard |
+| `/trip/:tripId` | Authenticated + completed profile | View trip details |
+| `/settings` | Authenticated + completed profile | Manage account settings |
+| `/admin/dashboard` | Authenticated admin | Administrator dashboard |
+
+Unauthenticated users are redirected to `/login`. Users without the admin role cannot access administrator routes.
+
+## Project structure
+
+```text
+.
+├── supabase/
+│   └── schema.sql                 Database schema, RLS policies, and storage setup
+├── src/
+│   ├── components/               Shared UI components
+│   ├── context/AuthContext.tsx    Authentication and profile context
+│   ├── pages/
+│   │   ├── Login/                Student and admin login pages
+│   │   ├── Register/              Registration flow
+│   │   ├── CompleteProfile/       Profile completion
+│   │   ├── Dashboard/             Student dashboard and trip details
+│   │   ├── Settings/              Account settings
+│   │   └── admin/                 Admin dashboard
+│   ├── routes/                    Protected and admin route guards
+│   ├── services/authService.ts    Authentication service functions
+│   ├── supabase/client.ts         Typed Supabase client
+│   └── types/                     Application and database types
+├── .env.example                   Required environment variable template
+├── package.json                   Scripts and dependencies
+└── vite.config.ts                 Vite configuration
 ```
-supabase/schema.sql          profiles + trips (stub) tables, RLS, storage buckets
-src/supabase/client.ts       Supabase client (typed)
-src/types/database.ts        hand-written row types (swap for `supabase gen types` later)
-src/types/user.ts            form value types
-src/context/AuthContext.tsx  session + profile + isAdmin, everywhere via useAuth()
-src/services/authService.ts  registerStudent / loginStudent / loginAdmin
-src/components/ui/           FormField, SelectField, AuthCard
-src/pages/Login/Login.tsx        student login
-src/pages/Login/AdminLogin.tsx   admin login (separate screen, verifies role)
-src/pages/Register/Register.tsx  4-step signup: account → personal → college → documents
-src/routes/ProtectedRoute.tsx    guards student pages, redirects to /login
-src/routes/AdminRoute.tsx        guards /admin/*, redirects to /admin/login
-src/App.tsx                      routes wired together
-```
 
-## Install
+## Getting started
+
+### Prerequisites
+
+- Node.js 18 or newer
+- npm
+- A Supabase project
+
+### 1. Install dependencies
 
 ```bash
-npm install @supabase/supabase-js react-router-dom react-hook-form zod @hookform/resolvers
+npm install
 ```
 
-Copy `.env.example` to `.env` and fill in your Supabase project URL + anon key.
+### 2. Configure Supabase
 
-## Set up the database
+Copy the environment template:
 
-Run `supabase/schema.sql` in the Supabase SQL editor. It creates:
+```bash
+cp .env.example .env
+```
 
-- a `user_role` enum (`student` / `admin`) and `verification_status` enum
-- a `trips` stub table (you'll expand this when you build the batches feature)
-- a `profiles` table (personal info, college info, storage **paths** for the
-  profile photo and ID proof, `id_verification_status`, `current_trip_id`)
-- a trigger that auto-creates a bare `profiles` row the moment someone signs up
-- RLS so a student can only read/update their own row, and can't self-promote
-  to `admin` or self-verify their own ID
-- two private storage buckets, `profile-photos` and `id-proofs`, scoped so a
-  user can only touch files under their own `user_id/` folder, and admins can
-  read everyone's
+Set the following values in `.env`:
 
-To create your first admin: sign up normally, then in the SQL editor run
-`update public.profiles set role = 'admin' where id = '<their-auth-uid>';`
+```dotenv
+VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+```
 
-## How the pieces map to what you described
+Never commit real Supabase credentials or other secrets to the repository.
 
-- **Register** → the 4-step form collects personal info, college info, then
-  uploads the profile photo and ID proof to the private buckets. `id_proof` is
-  stored as a path only (`profile_photo_path` / `id_proof_path`), never a
-  public URL — an admin screen later generates signed URLs to view them.
-- **Payments visible/verifiable by admin only** → not built yet, but the
-  pattern will match: a `payments` table with a `status` enum
-  (`pending`/`verified`/`rejected`), RLS so students only see their own rows
-  and only admins can flip `status`, exactly like `id_verification_status` here.
-- **`/admin` gating** → `AdminRoute` checks both "is there a session" and
-  "does this profile have role = admin". A logged-in *student* hitting
-  `/admin/anything` gets bounced to `/admin/login`, same as an anonymous
-  visitor — it never leaks that admin pages exist.
-- **Room locking (n rooms × m seats, admin-only edit after a deadline)** → not
-  built yet; when you get there, enforce the deadline in Postgres (a
-  `locks_at timestamptz` column on `trips` + an RLS check / a scheduled
-  function), not just in the UI, so a late client request can't sneak past it.
-- **Trip "batches"** → `profiles.current_trip_id` already points at `trips`.
-  Joining/removing a student from a batch becomes `update profiles set
-  current_trip_id = ...`; only admins get an RLS update policy for other
-  people's `current_trip_id`.
+### 3. Initialize the database
 
-## Next pieces, in the order they'll unblock each other
+Run [`supabase/schema.sql`](./supabase/schema.sql) in the Supabase SQL Editor. The schema creates:
 
-1. **Admin: student roster + ID verification** — list `profiles`, show a
-   signed URL for the ID proof, buttons to set `id_verification_status`.
-2. **Trips/batches** — flesh out the `trips` stub, a join screen for students,
-   an admin screen to add/remove students from a batch.
-3. **Rooms + room_allocations** — the locking behavior you described (open
-   until a deadline, then admin-only) is the trickiest part; happy to build
-   that as its own pass once this auth layer is working end-to-end for you.
-4. **Payments + installments** — `payments` table with an `installment_no`,
-   a view or computed column for "installments remaining", admin verify button.
+- `user_role` and `verification_status` enums
+- The `profiles` table and profile creation trigger
+- A `trips` foundation table
+- Row-level security policies
+- Private `profile-photos` and `id-proofs` storage buckets
+- Storage policies scoped to each user's folder
+
+To promote a registered user to an administrator, run the following in the Supabase SQL Editor after replacing the user ID:
+
+```sql
+update public.profiles
+set role = 'admin'
+where id = '<their-auth-uid>';
+```
+
+### 4. Start the development server
+
+```bash
+npm run dev
+```
+
+Vite will print the local development URL in the terminal.
+
+## Available scripts
+
+```bash
+npm run dev      # Start the Vite development server
+npm run build    # Type-check and create a production build
+npm run preview  # Preview the production build locally
+npm run lint     # Run Oxlint
+```
+
+## Roadmap
+
+The authentication and profile foundation is in place. Planned work includes:
+
+1. Admin student roster and ID verification workflow
+2. Trip batches and student enrollment management
+3. Room allocation with deadline enforcement in PostgreSQL
+4. Payments, installment tracking, and admin verification
+5. Generated Supabase database types and expanded automated testing
+
+## Security notes
+
+Authorization must be enforced in Supabase policies as well as in the client-side route guards. In particular, role changes, ID verification, payments, trip membership, and room-lock deadlines should never rely on UI checks alone.
+
+## License
+
+No license has been specified yet.
